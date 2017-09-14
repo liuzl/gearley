@@ -1,4 +1,5 @@
 package gearley
+
 import (
 	"testing"
 )
@@ -9,13 +10,12 @@ var B = Terminal('b')
 
 func Test_parse_Aabb(t *testing.T) {
 	g := Grammar(
-	    Rule(T, A, B),	    // T -> 'a' 'b'
-	    Rule(T, A, T, B),	    // T -> 'a' T 'b'
+		Rule(T, A, B),    // T -> 'a' 'b'
+		Rule(T, A, T, B), // T -> 'a' T 'b'
 	)
 
 	g.Parse("aabb")
 }
-
 
 func Test_stateSet_putItem(t *testing.T) {
 	ruleA := Rule(T, A)
@@ -26,10 +26,10 @@ func Test_stateSet_putItem(t *testing.T) {
 		t.Errorf("length not 0: %v", s)
 	}
 
-	item1a := &eitem{rule: ruleA, dot: 0, index: 0}
-	item1b := &eitem{rule: ruleA, dot: 0, index: 0}
-	item2a := &eitem{rule: ruleB, dot: 0, index: 0}
-	//item2b := &eitem{rule: Rule(T, B), dot: 0, index: 0}
+	item1a := &earleyItem{rule: ruleA, dot: 0, index: 0}
+	item1b := &earleyItem{rule: ruleA, dot: 0, index: 0}
+	item2a := &earleyItem{rule: ruleB, dot: 0, index: 0}
+	//item2b := &earleyItem{rule: Rule(T, B), dot: 0, index: 0}
 
 	s.putItem(item1a)
 	if s.length() != 1 {
