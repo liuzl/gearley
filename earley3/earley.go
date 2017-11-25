@@ -2,6 +2,8 @@ package earley3
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"reflect"
 )
 
@@ -23,7 +25,6 @@ import (
 type ProductionTerm interface {
 	String() string
 	Type() string
-	Equal(interface{}) bool
 }
 
 /*
@@ -42,7 +43,7 @@ func (self Terminal) Type() string {
 }
 
 func (self Terminal) Equal(other interface{}) bool {
-	if reflect.DeepEqual(self, other) {
+	if self == other { // no need using reflect.DeepEqual
 		return true
 	}
 	if s, ok := other.(string); ok && s == self.Value {
@@ -100,6 +101,22 @@ func (self *Production) getRules() {
 	}
 }
 
+func (self Production) String() string {
+	s := ""
+	for i, term := range self.Terms {
+		switch term.(type) {
+		case Terminal:
+			s += term.String()
+		case Rule:
+			s += term.(Rule).Name
+		}
+		if i != self.size()-1 {
+			s += " "
+		}
+	}
+	return s
+}
+
 /*
  * A CFG rule. Since CFG rules can be self-referential, more productions may be added
  * to them after construction. For example:
@@ -138,14 +155,105 @@ func (self *Rule) get(index int) *Production {
 	return self.Productions[index]
 }
 
-func (self Rule) Equal(other interface{}) bool {
-	return false
-}
-
 func (self Rule) String() string {
-	return self.Name
+	s := self.Name + " -> "
+	for i, prod := range self.Productions {
+		s += prod.String()
+		if i != self.size()-1 {
+			s += " | "
+		}
+	}
+	return s
 }
 
 func (self Rule) Type() string {
 	return "Non-Terminal"
+}
+
+/*
+ * Represents a state in the Earley parsing table. A state has its rule's name,
+ * the rule's production, dot-location, and starting- and ending-column in the parsing
+ * table
+ */
+type TableState struct {
+	name       string
+	production *Production
+	dotIndex   int
+	startCol   *TableColumn
+	endCol     *TableColumn
+}
+
+func (self *TableState) isCompleted() bool {
+	return self.dotIndex >= self.production.size()
+}
+
+func (self *TableState) getNextTerm() *ProductionTerm {
+	if self.isCompleted() {
+		return nil
+	}
+	return self.production.get(self.dotIndex)
+}
+
+func (self TableState) String() string {
+	s := ""
+	for i, term := range self.production.Terms {
+		if i == self.dotIndex {
+			s += "\u00B7"
+		}
+		switch term.(type) {
+		case Terminal:
+			s += term.String()
+		case Rule:
+			s += term.(Rule).Name
+		}
+		s += " "
+	}
+	if self.dotIndex == self.production.size() {
+		s += "\u00B7"
+	}
+	return fmt.Sprintf("%s -> %s [%d-%d]",
+		self.name, s, self.startCol.index, self.endCol.index)
+}
+
+/*
+ * Represents a column in the Earley parsing table
+ */
+type TableColumn struct {
+	token  string
+	index  int
+	states []TableState
+}
+
+/*
+ * only insert a state if it is not already contained in the list of states. return the
+ * inserted state, or the pre-existing one.
+ */
+func (self *TableColumn) insert(state TableState) *TableState {
+	for _, s := range self.states {
+		if state == s {
+			return &s
+		}
+	}
+	self.states = append(self.states, state)
+	return self.get(self.size() - 1)
+}
+
+func (self *TableColumn) size() int {
+	return len(self.states)
+}
+
+func (self *TableColumn) get(index int) *TableState {
+	return &self.states[index]
+}
+
+func (self *TableColumn) Print(out *os.File, showUncompleted bool) {
+	fmt.Fprintf(out, "[%d] '%s'\n", self.index, self.token)
+	fmt.Fprintln(out, "=======================================")
+	for _, s := range self.states {
+		if !s.isCompleted() && !showUncompleted {
+			continue
+		}
+		fmt.Fprintln(out, s)
+	}
+	fmt.Fprintln(out)
 }
