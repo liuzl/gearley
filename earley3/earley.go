@@ -257,3 +257,42 @@ func (self *TableColumn) Print(out *os.File, showUncompleted bool) {
 	}
 	fmt.Fprintln(out)
 }
+
+/*
+ * A generic tree node
+ */
+type Node struct {
+	value    interface{}
+	children []*Node
+}
+
+func (self *Node) Print(out *os.File) {
+	self.PrintLevel(out, 0)
+}
+
+func (self *Node) PrintLevel(out *os.File, level int) {
+	indentation := ""
+	for i := 0; i < level; i++ {
+		indentation += " "
+	}
+	fmt.Fprintf(out, "%s%v", indentation, self.value)
+	for _, child := range self.children {
+		child.PrintLevel(out, level+1)
+	}
+}
+
+/*
+ * The Earley Parser.
+ *
+ * Usage:
+ *
+ *   var p *Parser = NewParser(StartRule, "my space-delimited statement")
+ *   for _, tree := range p.getTrees() {
+ *     tree.Print(os.Stdout)
+ *   }
+ *
+ */
+type Parser struct {
+	columns    []*TableColumn
+	finalState *TableState
+}
