@@ -37,3 +37,23 @@ func TestTermEqual(t *testing.T) {
 		}
 	}
 }
+
+func TestEarleyParse(t *testing.T) {
+	SYM := NewRule("SYM", NewProductionFromTerms(Terminal{Value: "a"}))
+	OP := NewRule("OP", NewProductionFromTerms(Terminal{Value: "+"}))
+	EXPR := NewRule("EXPR", NewProductionFromTerms(SYM))
+	EXPR.add(NewProductionFromTerms(EXPR, OP, EXPR))
+
+	strs := []string{
+		"a",
+		"a + a",
+		"a + a + a",
+		"a + a + a + a",
+		"a + a + a + a + a",
+		"a + a + a + a + a + a",
+		"a + a + a + a + a + a + a",
+	}
+	for _, text := range strs {
+		NewParser(EXPR, text)
+	}
+}

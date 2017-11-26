@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 )
 
 /*
@@ -117,6 +118,9 @@ func (self Production) String() string {
 	return s
 }
 
+// Epsilon transition: an empty production
+var Epsilon = Production{}
+
 /*
  * A CFG rule. Since CFG rules can be self-referential, more productions may be added
  * to them after construction. For example:
@@ -221,20 +225,21 @@ func (self TableState) String() string {
 type TableColumn struct {
 	token  string
 	index  int
-	states []TableState
+	states []*TableState
 }
 
 /*
  * only insert a state if it is not already contained in the list of states. return the
  * inserted state, or the pre-existing one.
  */
-func (self *TableColumn) insert(state TableState) *TableState {
+func (self *TableColumn) insert(state *TableState) *TableState {
 	for _, s := range self.states {
-		if state == s {
-			return &s
+		if *state == *s {
+			return s
 		}
 	}
 	self.states = append(self.states, state)
+	state.endCol = self
 	return self.get(self.size() - 1)
 }
 
@@ -243,7 +248,7 @@ func (self *TableColumn) size() int {
 }
 
 func (self *TableColumn) get(index int) *TableState {
-	return &self.states[index]
+	return self.states[index]
 }
 
 func (self *TableColumn) Print(out *os.File, showUncompleted bool) {
@@ -295,4 +300,204 @@ func (self *Node) PrintLevel(out *os.File, level int) {
 type Parser struct {
 	columns    []*TableColumn
 	finalState *TableState
+}
+
+func NewParser(startRule *Rule, text string) *Parser {
+	tokens := strings.Fields(text)
+	parser := &Parser{}
+	parser.columns = append(parser.columns, &TableColumn{index: 0, token: ""})
+	for i, token := range tokens {
+		parser.columns = append(parser.columns,
+			&TableColumn{index: i + 1, token: token})
+	}
+	parser.finalState = parser.parse(startRule)
+	// TODO
+	return parser
+}
+
+// this is the name of the special "gamma" rule added by the algorithm
+// (this is unicode for 'LATIN SMALL LETTER GAMMA')
+const GAMMA_RULE = "\u0263" // "\u0194"
+
+/*
+ * the Earley algorithm's core: add gamma rule, fill up table, and check if the gamma rule
+ * span from the first column to the last one. return the final gamma state, or null,
+ * if the parse failed.
+ */
+func (self *Parser) parse(startRule *Rule) *TableState {
+	self.columns[0].states = append(self.columns[0].states,
+		&TableState{
+			name:       GAMMA_RULE,
+			production: NewProductionFromTerms(startRule),
+			dotIndex:   0,
+			startCol:   self.columns[0],
+		})
+	for i, col := range self.columns {
+		for j := 0; j < len(col.states); j++ {
+			state := col.states[j]
+			if state.isCompleted() {
+				self.complete(col, state)
+			} else {
+				var term interface{} = state.getNextTerm()
+				switch term.(type) {
+				case *Rule:
+					self.predict(col, term.(*Rule))
+				case *Terminal:
+					if i+1 < len(self.columns) {
+						self.scan(self.columns[i+1], state, term.(*Terminal).Value)
+					}
+				}
+			}
+		}
+		self.handleEpsilons(col)
+		// DEBUG -- uncomment to print the table during parsing, column after column
+		col.Print(os.Stdout, false)
+	}
+
+	// find end state (return nil if not found)
+	lastCol := self.columns[len(self.columns)-1]
+	for i := 0; i < len(lastCol.states); i++ {
+		if lastCol.states[i].name == GAMMA_RULE && lastCol.states[i].isCompleted() {
+			return lastCol.states[i]
+		}
+	}
+	return nil
+}
+
+/*
+ * Earley scan
+ */
+func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
+	if token == col.token {
+		col.insert(&TableState{
+			name:       state.name,
+			production: state.production,
+			dotIndex:   state.dotIndex + 1,
+			startCol:   state.startCol,
+		})
+	}
+}
+
+/*
+ * Earley predict. returns true if the table has been changed, false otherwise
+ */
+func (self *Parser) predict(col *TableColumn, rule *Rule) bool {
+	changed := false
+	for _, prod := range rule.Productions {
+		st := &TableState{name: rule.Name, production: prod, dotIndex: 0, startCol: col}
+		st2 := col.insert(st)
+		changed = changed || (st == st2)
+	}
+	return changed
+}
+
+/*
+ * Earley complete. returns true if the table has been changed, false otherwise
+ */
+func (self *Parser) complete(col *TableColumn, state *TableState) bool {
+	changed := false
+	for _, st := range state.startCol.states {
+		var term interface{} = st.getNextTerm()
+		if r, ok := term.(*Rule); ok && r.Name == state.name {
+			st := &TableState{name: r.Name, production: st.production, dotIndex: st.dotIndex + 1, startCol: st.startCol}
+			st2 := col.insert(st)
+			changed = changed || (st == st2)
+		}
+	}
+	return changed
+}
+
+/*
+ * call predict() and complete() for as long as the table keeps changing (may only happen
+ * if we've got epsilon transitions)
+ */
+func (self *Parser) handleEpsilons(col *TableColumn) {
+	changed := true
+	for changed {
+		changed = false
+		for _, state := range col.states {
+			var term interface{} = state.getNextTerm()
+			if r, ok := term.(*Rule); ok {
+				changed = changed || self.predict(col, r)
+			}
+			if state.isCompleted() {
+				changed = changed || self.complete(col, state)
+			}
+		}
+	}
+}
+
+/*
+ * return all parse trees (forest). the forest is simply a list of root nodes, each
+ * representing a possible parse tree. a node is contains a value and the node's children,
+ * and supports pretty-printing
+ */
+func (self *Parser) getTrees() []*Node {
+	return self.buildTrees(self.finalState)
+}
+
+/*
+ * this is a bit "magical" -- i wrote the code that extracts a single parse tree,
+ * and with some help from a colleague (non-student) we managed to make it return all
+ * parse trees.
+ *
+ * how it works: suppose we're trying to match [X -> Y Z W]. we go from finish-to-start,
+ * e.g., first we'll try to match W in X.encCol. let this matching state be M1. next we'll
+ * try to match Z in M1.startCol. let this matching state be M2. and finally, we'll try to
+ * match Y in M2.startCol, which must also start at X.startCol. let this matching state be
+ * M3.
+ *
+ * if we matched M1, M2 and M3, then we've found a parsing for X:
+ * X->
+ *    Y -> M3
+ *    Z -> M2
+ *    W -> M1
+ *
+ */
+func (self *Parser) buildTrees(state *TableState) []*Node {
+	return self.buildTreesHelper(&[]*Node{}, state, len(state.production.Rules)-1, state.endCol)
+}
+
+func (self *Parser) buildTreesHelper(children *[]*Node, state *TableState, ruleIndex int, endCol *TableColumn) []*Node {
+	var outputs []*Node
+	var startCol *TableColumn
+	if ruleIndex < 0 {
+		// this is the base-case for the recursion (we matched the entire rule)
+		outputs = append(outputs, &Node{value: state, children: *children})
+		return outputs
+	} else if ruleIndex == 0 {
+		// if this is the first rule
+		startCol = state.startCol
+	}
+	rule := state.production.Rules[ruleIndex]
+
+	for _, st := range state.endCol.states {
+		if st == state {
+			// this prevents an endless recursion: since the states are filled in order of
+			// completion, we know that X cannot depend on state Y that comes after it X
+			// in chronological order
+			break
+		}
+		if !st.isCompleted() || st.name != rule.Name {
+			// this state is out of the question -- either not completed or does not match
+			// the name
+			continue
+		}
+		if startCol != nil && st.startCol != startCol {
+			// if startCol isn't nil, this state must span from startCol to endCol
+			continue
+		}
+		// okay, so `st` matches -- now we need to create a tree for every possible sub-match
+		for _, subTree := range self.buildTrees(st) {
+			// in python: children2 = [subTree] + children
+			children2 := []*Node{}
+			children2 = append(children2, subTree)
+			children2 = append(children2, *children...)
+			// now try all options
+			for _, node := range self.buildTreesHelper(&children2, state, ruleIndex-1, st.startCol) {
+				outputs = append(outputs, node)
+			}
+		}
+	}
+	return outputs
 }
