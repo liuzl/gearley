@@ -2,6 +2,7 @@ package earley3
 
 import (
 	"fmt"
+	"github.com/golang/glog"
 	"os"
 	"reflect"
 	"strings"
@@ -203,13 +204,13 @@ type TableColumn struct {
  * return the inserted state, or the pre-existing one.
  */
 func (self *TableColumn) insert(state *TableState) *TableState {
+	state.endCol = self
 	for _, s := range self.states {
 		if *state == *s {
 			return s
 		}
 	}
 	self.states = append(self.states, state)
-	state.endCol = self
 	return self.get(self.size() - 1)
 }
 
@@ -224,7 +225,7 @@ func (self *TableColumn) get(index int) *TableState {
 func (self *TableColumn) String() string {
 	out := ""
 	out += fmt.Sprintf("[%d] '%s'\n", self.index, self.token)
-	out += "======================================="
+	out += "=======================================\n"
 	for _, s := range self.states {
 		out += s.String()
 	}
@@ -292,17 +293,11 @@ func (self *Parser) String() string {
 
 func NewParser(startRule *Rule, text string) *Parser {
 	tokens := strings.Fields(text)
-	if debug {
-		//fmt.Println(tokens)
-	}
 	parser := &Parser{}
 	parser.columns = append(parser.columns, &TableColumn{index: 0, token: ""})
 	for i, token := range tokens {
 		parser.columns = append(parser.columns,
 			&TableColumn{index: i + 1, token: token})
-	}
-	if debug {
-		//fmt.Println(parser)
 	}
 	parser.finalState = parser.parse(startRule)
 	// TODO
@@ -319,36 +314,23 @@ const GAMMA_RULE = "\u0263" // "\u0194"
  * state, or null, if the parse failed.
  */
 func (self *Parser) parse(startRule *Rule) *TableState {
-	if debug {
-		//fmt.Println(startRule)
-	}
 	begin := TableState{
 		name:       GAMMA_RULE,
 		production: NewProduction(startRule),
 		dotIndex:   0,
-		startCol:   self.columns[0]}
+		startCol:   self.columns[0],
+		endCol:     self.columns[0]}
 
 	self.columns[0].states = append(self.columns[0].states, &begin)
-	if debug {
-		println(self.columns[0].states[0], "##self.columns[0].states[0]##")
-		println(&begin, "##begin##")
-		println(self.columns[0], "##self.columns[0]##")
-		println(begin.startCol, "##begin.startCol##")
-		fmt.Println(begin.production.terms, "##begin.startCol##")
-	}
-	if debug {
-		fmt.Printf("  %s->%s:%d\n", begin.name, begin.production, begin.dotIndex)
-		fmt.Printf("  %s\n", begin.startCol)
-	}
 
 	for i, col := range self.columns {
 		if debug {
-			fmt.Printf("column: %d\n", i)
+			glog.Infof("column: %d\n", i)
 		}
 		for j := 0; j < len(col.states); j++ {
 			state := col.states[j]
 			if debug {
-				fmt.Printf("  %d, %s ", j, state)
+				glog.Infof("  process %d (%d), %+v ", j, len(col.states), state)
 			}
 			if state.isCompleted() {
 				self.complete(col, state)
@@ -366,7 +348,7 @@ func (self *Parser) parse(startRule *Rule) *TableState {
 		}
 		self.handleEpsilons(col)
 		// DEBUG -- uncomment to print the table during parsing, column after column
-		col.Print(os.Stdout, false)
+		col.Print(os.Stdout, true)
 	}
 
 	// find end state (return nil if not found)
@@ -384,7 +366,7 @@ func (self *Parser) parse(startRule *Rule) *TableState {
  */
 func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
 	if debug {
-		fmt.Printf("<scan> TermInProduction: %s, Input: %s\n", token, col.token)
+		glog.Infof("    <scan> TermInProduction: %s, Input: %s\n", token, col.token)
 	}
 	if token == col.token {
 		col.insert(&TableState{
@@ -401,7 +383,7 @@ func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
  */
 func (self *Parser) predict(col *TableColumn, rule *Rule) bool {
 	if debug {
-		fmt.Printf("<predict> %s\n", rule.name)
+		glog.Infof("    <predict> %s\n", rule.name)
 	}
 	changed := false
 	for _, prod := range rule.productions {
