@@ -1,12 +1,13 @@
 package earley3
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"strings"
 )
+
+const debug = true
 
 /*
  * Terminology
@@ -17,99 +18,72 @@ import (
  *
  * We say rule 'X' has two __production__: "A B C" and "A hello".
  * Each production is made of __production terms__, which can be either
- * __terminals__ (in our case, "hello") or __rules__ (non-terminals, such as "A", "B", and "C")
+ * __terminals__ (in our case, "hello") or __rules__ (non-terminals, such
+ * as "A", "B", and "C")
  */
-
-/*
- * an abstract notation of the elements that can be placed within production
- */
-type ProductionTerm interface {
-	String() string
-	Type() string
-}
 
 /*
  * Represents a terminal element in a production
  */
 type Terminal struct {
-	Value string
+	value string
 }
 
-func (self Terminal) String() string {
-	return self.Value
-}
-
-func (self Terminal) Type() string {
-	return "Terminal"
-}
-
-func (self Terminal) Equal(other interface{}) bool {
-	if self == other { // no need using reflect.DeepEqual
-		return true
-	}
-	if s, ok := other.(string); ok && s == self.Value {
-		return true
-	}
-	return false
+func (self *Terminal) String() string {
+	return self.value
 }
 
 /*
  * Represents a production of the rule.
  */
 type Production struct {
-	Terms []ProductionTerm
-	Rules []Rule
+	terms []interface{}
+	rules []*Rule
 }
 
-func NewProductionFromTerms(terms ...ProductionTerm) *Production {
-	prod := &Production{Terms: terms}
-	prod.getRules()
-	return prod
-}
-
-func NewProduction(terms ...interface{}) (*Production, error) {
+func NewProduction(terms ...interface{}) *Production {
 	prod := &Production{}
 	for _, term := range terms {
 		switch term.(type) {
-		case string:
-			prod.Terms = append(prod.Terms, Terminal{Value: term.(string)})
-		case ProductionTerm:
-			prod.Terms = append(prod.Terms, term.(ProductionTerm))
-		case *ProductionTerm:
-			prod.Terms = append(prod.Terms, *term.(*ProductionTerm))
+		case *Terminal:
+			prod.terms = append(prod.terms, term.(*Terminal))
+		case string: // treat string as Terminal
+			prod.terms = append(prod.terms, &Terminal{term.(string)})
+		case *Rule:
+			prod.terms = append(prod.terms, term.(*Rule))
 		default:
-			return nil, errors.New("Term must be ProductionTerm or string, not " + reflect.TypeOf(term).String())
+			println("*Terminal, *Rule, string, not " + reflect.TypeOf(term).String())
 		}
 	}
-	return prod, nil
+	return prod
 }
 
 func (self *Production) size() int {
-	return len(self.Terms)
+	return len(self.terms)
 }
 
-func (self *Production) get(index int) *ProductionTerm {
-	return &self.Terms[index]
+func (self *Production) get(index int) interface{} {
+	return self.terms[index]
 }
 
 func (self *Production) getRules() {
-	self.Rules = nil
-	for _, term := range self.Terms {
+	self.rules = nil
+	for _, term := range self.terms {
 		switch term.(type) {
-		case Rule:
-			self.Rules = append(self.Rules, term.(Rule))
+		case *Rule:
+			self.rules = append(self.rules, term.(*Rule))
 		}
 	}
 }
 
-func (self Production) String() string {
+func (self *Production) String() string {
 	s := ""
-	for i, term := range self.Terms {
+	for i, term := range self.terms {
 		switch term.(type) {
-		case Terminal:
-			s += term.String()
-		case Rule:
-			s += term.(Rule).Name
+		case *Terminal:
+			s += term.(*Terminal).value
+		case *Rule:
+			s += term.(*Rule).name
 		}
 		if i != self.size()-1 {
 			s += " "
@@ -134,34 +108,34 @@ var Epsilon = Production{}
  *     Rule SYM = new Rule("SYM", new Production("a"));
  *     Rule OP = new Rule("OP", new Production("+"), new Production("-"));
  *     Rule EXPR = new Rule("EXPR", new Production(SYM));
- *     EXPR.add(new Production(EXPR, OP, EXPR));            // needs to reference EXPR
+ *     EXPR.add(new Production(EXPR, OP, EXPR));         // needs to reference EXPR
  *
  */
 
 type Rule struct {
-	Name        string
-	Productions []*Production
+	name        string
+	productions []*Production
 }
 
-func NewRule(name string, productions ...*Production) *Rule {
-	return &Rule{Name: name, Productions: productions}
+func NewRule(name string, prods ...*Production) *Rule {
+	return &Rule{name: name, productions: prods}
 }
 
-func (self *Rule) add(productions ...*Production) {
-	self.Productions = append(self.Productions, productions...)
+func (self *Rule) add(prods ...*Production) {
+	self.productions = append(self.productions, prods...)
 }
 
 func (self *Rule) size() int {
-	return len(self.Productions)
+	return len(self.productions)
 }
 
 func (self *Rule) get(index int) *Production {
-	return self.Productions[index]
+	return self.productions[index]
 }
 
-func (self Rule) String() string {
-	s := self.Name + " -> "
-	for i, prod := range self.Productions {
+func (self *Rule) String() string {
+	s := self.name + " -> "
+	for i, prod := range self.productions {
 		s += prod.String()
 		if i != self.size()-1 {
 			s += " | "
@@ -170,14 +144,10 @@ func (self Rule) String() string {
 	return s
 }
 
-func (self Rule) Type() string {
-	return "Non-Terminal"
-}
-
 /*
  * Represents a state in the Earley parsing table. A state has its rule's name,
- * the rule's production, dot-location, and starting- and ending-column in the parsing
- * table
+ * the rule's production, dot-location, and starting- and ending-column in the
+ * parsing table
  */
 type TableState struct {
 	name       string
@@ -191,24 +161,24 @@ func (self *TableState) isCompleted() bool {
 	return self.dotIndex >= self.production.size()
 }
 
-func (self *TableState) getNextTerm() *ProductionTerm {
+func (self *TableState) getNextTerm() interface{} {
 	if self.isCompleted() {
 		return nil
 	}
 	return self.production.get(self.dotIndex)
 }
 
-func (self TableState) String() string {
+func (self *TableState) String() string {
 	s := ""
-	for i, term := range self.production.Terms {
+	for i, term := range self.production.terms {
 		if i == self.dotIndex {
 			s += "\u00B7"
 		}
 		switch term.(type) {
-		case Terminal:
-			s += term.String()
-		case Rule:
-			s += term.(Rule).Name
+		case *Terminal:
+			s += term.(*Terminal).value
+		case *Rule:
+			s += term.(*Rule).name
 		}
 		s += " "
 	}
@@ -229,8 +199,8 @@ type TableColumn struct {
 }
 
 /*
- * only insert a state if it is not already contained in the list of states. return the
- * inserted state, or the pre-existing one.
+ * only insert a state if it is not already contained in the list of states.
+ * return the inserted state, or the pre-existing one.
  */
 func (self *TableColumn) insert(state *TableState) *TableState {
 	for _, s := range self.states {
@@ -249,6 +219,16 @@ func (self *TableColumn) size() int {
 
 func (self *TableColumn) get(index int) *TableState {
 	return self.states[index]
+}
+
+func (self *TableColumn) String() string {
+	out := ""
+	out += fmt.Sprintf("[%d] '%s'\n", self.index, self.token)
+	out += "======================================="
+	for _, s := range self.states {
+		out += s.String()
+	}
+	return out
 }
 
 func (self *TableColumn) Print(out *os.File, showUncompleted bool) {
@@ -302,13 +282,27 @@ type Parser struct {
 	finalState *TableState
 }
 
+func (self *Parser) String() string {
+	out := ""
+	for _, c := range self.columns {
+		out += c.String() + "\n"
+	}
+	return out
+}
+
 func NewParser(startRule *Rule, text string) *Parser {
 	tokens := strings.Fields(text)
+	if debug {
+		//fmt.Println(tokens)
+	}
 	parser := &Parser{}
 	parser.columns = append(parser.columns, &TableColumn{index: 0, token: ""})
 	for i, token := range tokens {
 		parser.columns = append(parser.columns,
 			&TableColumn{index: i + 1, token: token})
+	}
+	if debug {
+		//fmt.Println(parser)
 	}
 	parser.finalState = parser.parse(startRule)
 	// TODO
@@ -320,21 +314,42 @@ func NewParser(startRule *Rule, text string) *Parser {
 const GAMMA_RULE = "\u0263" // "\u0194"
 
 /*
- * the Earley algorithm's core: add gamma rule, fill up table, and check if the gamma rule
- * span from the first column to the last one. return the final gamma state, or null,
- * if the parse failed.
+ * the Earley algorithm's core: add gamma rule, fill up table, and check if the
+ * gamma rule span from the first column to the last one. return the final gamma
+ * state, or null, if the parse failed.
  */
 func (self *Parser) parse(startRule *Rule) *TableState {
-	self.columns[0].states = append(self.columns[0].states,
-		&TableState{
-			name:       GAMMA_RULE,
-			production: NewProductionFromTerms(startRule),
-			dotIndex:   0,
-			startCol:   self.columns[0],
-		})
+	if debug {
+		//fmt.Println(startRule)
+	}
+	begin := TableState{
+		name:       GAMMA_RULE,
+		production: NewProduction(startRule),
+		dotIndex:   0,
+		startCol:   self.columns[0]}
+
+	self.columns[0].states = append(self.columns[0].states, &begin)
+	if debug {
+		println(self.columns[0].states[0], "##self.columns[0].states[0]##")
+		println(&begin, "##begin##")
+		println(self.columns[0], "##self.columns[0]##")
+		println(begin.startCol, "##begin.startCol##")
+		fmt.Println(begin.production.terms, "##begin.startCol##")
+	}
+	if debug {
+		fmt.Printf("  %s->%s:%d\n", begin.name, begin.production, begin.dotIndex)
+		fmt.Printf("  %s\n", begin.startCol)
+	}
+
 	for i, col := range self.columns {
+		if debug {
+			fmt.Printf("column: %d\n", i)
+		}
 		for j := 0; j < len(col.states); j++ {
 			state := col.states[j]
+			if debug {
+				fmt.Printf("  %d, %s ", j, state)
+			}
 			if state.isCompleted() {
 				self.complete(col, state)
 			} else {
@@ -344,7 +359,7 @@ func (self *Parser) parse(startRule *Rule) *TableState {
 					self.predict(col, term.(*Rule))
 				case *Terminal:
 					if i+1 < len(self.columns) {
-						self.scan(self.columns[i+1], state, term.(*Terminal).Value)
+						self.scan(self.columns[i+1], state, term.(*Terminal).value)
 					}
 				}
 			}
@@ -368,6 +383,9 @@ func (self *Parser) parse(startRule *Rule) *TableState {
  * Earley scan
  */
 func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
+	if debug {
+		fmt.Printf("<scan> TermInProduction: %s, Input: %s\n", token, col.token)
+	}
 	if token == col.token {
 		col.insert(&TableState{
 			name:       state.name,
@@ -382,9 +400,16 @@ func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
  * Earley predict. returns true if the table has been changed, false otherwise
  */
 func (self *Parser) predict(col *TableColumn, rule *Rule) bool {
+	if debug {
+		fmt.Printf("<predict> %s\n", rule.name)
+	}
 	changed := false
-	for _, prod := range rule.Productions {
-		st := &TableState{name: rule.Name, production: prod, dotIndex: 0, startCol: col}
+	for _, prod := range rule.productions {
+		st := &TableState{
+			name:       rule.name,
+			production: prod,
+			dotIndex:   0,
+			startCol:   col}
 		st2 := col.insert(st)
 		changed = changed || (st == st2)
 	}
@@ -398,8 +423,12 @@ func (self *Parser) complete(col *TableColumn, state *TableState) bool {
 	changed := false
 	for _, st := range state.startCol.states {
 		var term interface{} = st.getNextTerm()
-		if r, ok := term.(*Rule); ok && r.Name == state.name {
-			st := &TableState{name: r.Name, production: st.production, dotIndex: st.dotIndex + 1, startCol: st.startCol}
+		if r, ok := term.(*Rule); ok && r.name == state.name {
+			st := &TableState{
+				name:       r.name,
+				production: st.production,
+				dotIndex:   st.dotIndex + 1,
+				startCol:   st.startCol}
 			st2 := col.insert(st)
 			changed = changed || (st == st2)
 		}
@@ -408,8 +437,8 @@ func (self *Parser) complete(col *TableColumn, state *TableState) bool {
 }
 
 /*
- * call predict() and complete() for as long as the table keeps changing (may only happen
- * if we've got epsilon transitions)
+ * call predict() and complete() for as long as the table keeps changing (may only
+ * happen if we've got epsilon transitions)
  */
 func (self *Parser) handleEpsilons(col *TableColumn) {
 	changed := true
@@ -429,8 +458,8 @@ func (self *Parser) handleEpsilons(col *TableColumn) {
 
 /*
  * return all parse trees (forest). the forest is simply a list of root nodes, each
- * representing a possible parse tree. a node is contains a value and the node's children,
- * and supports pretty-printing
+ * representing a possible parse tree. a node is contains a value and the node's
+ * children, and supports pretty-printing
  */
 func (self *Parser) getTrees() []*Node {
 	return self.buildTrees(self.finalState)
@@ -441,11 +470,11 @@ func (self *Parser) getTrees() []*Node {
  * and with some help from a colleague (non-student) we managed to make it return all
  * parse trees.
  *
- * how it works: suppose we're trying to match [X -> Y Z W]. we go from finish-to-start,
- * e.g., first we'll try to match W in X.encCol. let this matching state be M1. next we'll
- * try to match Z in M1.startCol. let this matching state be M2. and finally, we'll try to
- * match Y in M2.startCol, which must also start at X.startCol. let this matching state be
- * M3.
+ * how it works: suppose we're trying to match [X -> Y Z W]. we go from finish to
+ * start, e.g., first we'll try to match W in X.encCol. let this matching state be
+ * M1. next we'll try to match Z in M1.startCol. let this matching state be M2. and
+ * finally, we'll try to match Y in M2.startCol, which must also start at X.startCol.
+ * let this matching state be M3.
  *
  * if we matched M1, M2 and M3, then we've found a parsing for X:
  * X->
@@ -455,10 +484,15 @@ func (self *Parser) getTrees() []*Node {
  *
  */
 func (self *Parser) buildTrees(state *TableState) []*Node {
-	return self.buildTreesHelper(&[]*Node{}, state, len(state.production.Rules)-1, state.endCol)
+	return self.buildTreesHelper(
+		&[]*Node{}, state, len(state.production.rules)-1, state.endCol)
 }
 
-func (self *Parser) buildTreesHelper(children *[]*Node, state *TableState, ruleIndex int, endCol *TableColumn) []*Node {
+func (self *Parser) buildTreesHelper(
+	children *[]*Node,
+	state *TableState,
+	ruleIndex int,
+	endCol *TableColumn) []*Node {
 	var outputs []*Node
 	var startCol *TableColumn
 	if ruleIndex < 0 {
@@ -469,32 +503,34 @@ func (self *Parser) buildTreesHelper(children *[]*Node, state *TableState, ruleI
 		// if this is the first rule
 		startCol = state.startCol
 	}
-	rule := state.production.Rules[ruleIndex]
+	rule := state.production.rules[ruleIndex]
 
 	for _, st := range state.endCol.states {
 		if st == state {
-			// this prevents an endless recursion: since the states are filled in order of
-			// completion, we know that X cannot depend on state Y that comes after it X
-			// in chronological order
+			// this prevents an endless recursion: since the states are filled in
+			// order of completion, we know that X cannot depend on state Y that
+			// comes after it X in chronological order
 			break
 		}
-		if !st.isCompleted() || st.name != rule.Name {
-			// this state is out of the question -- either not completed or does not match
-			// the name
+		if !st.isCompleted() || st.name != rule.name {
+			// this state is out of the question -- either not completed or does not
+			// match the name
 			continue
 		}
 		if startCol != nil && st.startCol != startCol {
 			// if startCol isn't nil, this state must span from startCol to endCol
 			continue
 		}
-		// okay, so `st` matches -- now we need to create a tree for every possible sub-match
+		// okay, so `st` matches -- now we need to create a tree for every possible
+		// sub-match
 		for _, subTree := range self.buildTrees(st) {
 			// in python: children2 = [subTree] + children
 			children2 := []*Node{}
 			children2 = append(children2, subTree)
 			children2 = append(children2, *children...)
 			// now try all options
-			for _, node := range self.buildTreesHelper(&children2, state, ruleIndex-1, st.startCol) {
+			for _, node := range self.buildTreesHelper(
+				&children2, state, ruleIndex-1, st.startCol) {
 				outputs = append(outputs, node)
 			}
 		}
