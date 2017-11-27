@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const debug = true
+const debug = false
 
 /*
  * Terminology
@@ -211,6 +211,9 @@ func (self *TableColumn) insert(state *TableState) *TableState {
 		}
 	}
 	self.states = append(self.states, state)
+	if debug {
+		glog.Infof("        <inserted> %+v", state)
+	}
 	return self.get(self.size() - 1)
 }
 
@@ -330,7 +333,7 @@ func (self *Parser) parse(startRule *Rule) *TableState {
 		for j := 0; j < len(col.states); j++ {
 			state := col.states[j]
 			if debug {
-				glog.Infof("  process %d (%d), %+v ", j, len(col.states), state)
+				glog.Infof("  process %d of %d, %+v ", j+1, len(col.states), state)
 			}
 			if state.isCompleted() {
 				self.complete(col, state)
@@ -348,7 +351,7 @@ func (self *Parser) parse(startRule *Rule) *TableState {
 		}
 		self.handleEpsilons(col)
 		// DEBUG -- uncomment to print the table during parsing, column after column
-		col.Print(os.Stdout, true)
+		//col.Print(os.Stdout, true)
 	}
 
 	// find end state (return nil if not found)
@@ -364,34 +367,26 @@ func (self *Parser) parse(startRule *Rule) *TableState {
 /*
  * Earley scan
  */
-func (self *Parser) scan(col *TableColumn, state *TableState, token string) {
+func (self *Parser) scan(col *TableColumn, st *TableState, token string) {
 	if debug {
 		glog.Infof("    <scan> TermInProduction: %s, Input: %s\n", token, col.token)
 	}
 	if token == col.token {
-		col.insert(&TableState{
-			name:       state.name,
-			production: state.production,
-			dotIndex:   state.dotIndex + 1,
-			startCol:   state.startCol,
-		})
+		col.insert(&TableState{name: st.name, production: st.production,
+			dotIndex: st.dotIndex + 1, startCol: st.startCol})
 	}
 }
 
 /*
  * Earley predict. returns true if the table has been changed, false otherwise
  */
-func (self *Parser) predict(col *TableColumn, rule *Rule) bool {
+func (self *Parser) predict(col *TableColumn, r *Rule) bool {
 	if debug {
-		glog.Infof("    <predict> %s\n", rule.name)
+		glog.Infof("    <predict> %s\n", r.name)
 	}
 	changed := false
-	for _, prod := range rule.productions {
-		st := &TableState{
-			name:       rule.name,
-			production: prod,
-			dotIndex:   0,
-			startCol:   col}
+	for _, prod := range r.productions {
+		st := &TableState{name: r.name, production: prod, dotIndex: 0, startCol: col}
 		st2 := col.insert(st)
 		changed = changed || (st == st2)
 	}
@@ -402,17 +397,20 @@ func (self *Parser) predict(col *TableColumn, rule *Rule) bool {
  * Earley complete. returns true if the table has been changed, false otherwise
  */
 func (self *Parser) complete(col *TableColumn, state *TableState) bool {
+	if debug {
+		glog.Infof("    <complete> %+v\n", state)
+	}
 	changed := false
 	for _, st := range state.startCol.states {
 		var term interface{} = st.getNextTerm()
 		if r, ok := term.(*Rule); ok && r.name == state.name {
-			st := &TableState{
-				name:       r.name,
-				production: st.production,
-				dotIndex:   st.dotIndex + 1,
-				startCol:   st.startCol}
-			st2 := col.insert(st)
-			changed = changed || (st == st2)
+			if debug {
+				glog.Infof("      %+v {%+v}\n", st, term)
+			}
+			st1 := &TableState{name: st.name, production: st.production,
+				dotIndex: st.dotIndex + 1, startCol: st.startCol, endCol: col}
+			st2 := col.insert(st1)
+			changed = changed || (st1 == st2)
 		}
 	}
 	return changed

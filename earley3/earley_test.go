@@ -19,9 +19,6 @@ func TestEarleyParse(t *testing.T) {
 	OP := NewRule("OP", NewProduction(&Terminal{"+"}))
 	EXPR := NewRule("EXPR", NewProduction(SYM))
 	EXPR.add(NewProduction(EXPR, OP, EXPR))
-	t.Log(SYM)
-	t.Log(OP)
-	t.Log(EXPR)
 
 	strs := []string{
 		//"a",
@@ -33,7 +30,10 @@ func TestEarleyParse(t *testing.T) {
 		//"a + a + a + a + a + a + a",
 	}
 	for _, text := range strs {
-		NewParser(EXPR, text)
+		p := NewParser(EXPR, text)
 		t.Log(text)
+		trees := p.getTrees()
+		t.Log(len(trees))
+		t.Log(trees[0])
 	}
 }
