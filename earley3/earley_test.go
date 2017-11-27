@@ -1,18 +1,9 @@
 package earley3
 
 import (
+	"os"
 	"testing"
 )
-
-func TestTermTypes(t *testing.T) {
-	terms := []interface{}{
-		&Terminal{value: "terminal"},
-		&Rule{name: "Rule"},
-	}
-	for _, term := range terms {
-		t.Log(term)
-	}
-}
 
 func TestEarleyParse(t *testing.T) {
 	SYM := NewRule("SYM", NewProduction(&Terminal{"a"}))
@@ -23,17 +14,19 @@ func TestEarleyParse(t *testing.T) {
 	strs := []string{
 		//"a",
 		"a + a",
-		//"a + a + a",
+		"a + a + a",
 		//"a + a + a + a",
 		//"a + a + a + a + a",
 		//"a + a + a + a + a + a",
-		//"a + a + a + a + a + a + a",
+		"a + a + a + a + a + a + a",
 	}
 	for _, text := range strs {
 		p := NewParser(EXPR, text)
-		t.Log(text)
 		trees := p.getTrees()
-		t.Log(len(trees))
-		t.Log(trees[0])
+		t.Log("tree number:", len(*trees))
+		for _, tree := range *trees {
+			tree.Print(os.Stdout)
+		}
+		//(*trees)[0].Print(os.Stdout)
 	}
 }

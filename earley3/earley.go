@@ -9,6 +9,7 @@ import (
 )
 
 const debug = false
+const treeDebug = false
 
 /*
  * Terminology
@@ -56,6 +57,7 @@ func NewProduction(terms ...interface{}) *Production {
 			println("*Terminal, *Rule, string, not " + reflect.TypeOf(term).String())
 		}
 	}
+	prod.getRules()
 	return prod
 }
 
@@ -230,7 +232,7 @@ func (self *TableColumn) String() string {
 	out += fmt.Sprintf("[%d] '%s'\n", self.index, self.token)
 	out += "=======================================\n"
 	for _, s := range self.states {
-		out += s.String()
+		out += s.String() + "\n"
 	}
 	return out
 }
@@ -262,11 +264,19 @@ func (self *Node) Print(out *os.File) {
 func (self *Node) PrintLevel(out *os.File, level int) {
 	indentation := ""
 	for i := 0; i < level; i++ {
-		indentation += " "
+		indentation += "  "
 	}
-	fmt.Fprintf(out, "%s%v", indentation, self.value)
+	fmt.Fprintf(out, "%s%v\n", indentation, self.value)
 	for _, child := range self.children {
 		child.PrintLevel(out, level+1)
+	}
+}
+
+func (self *Node) String() string {
+	if len(self.children) > 0 {
+		return fmt.Sprintf("%+v %+v", self.value, self.children)
+	} else {
+		return fmt.Sprintf("%+v", self.value)
 	}
 }
 
@@ -303,7 +313,6 @@ func NewParser(startRule *Rule, text string) *Parser {
 			&TableColumn{index: i + 1, token: token})
 	}
 	parser.finalState = parser.parse(startRule)
-	// TODO
 	return parser
 }
 
@@ -441,8 +450,11 @@ func (self *Parser) handleEpsilons(col *TableColumn) {
  * representing a possible parse tree. a node is contains a value and the node's
  * children, and supports pretty-printing
  */
-func (self *Parser) getTrees() []*Node {
-	return self.buildTrees(self.finalState)
+func (self *Parser) getTrees() *[]*Node {
+	if self.finalState != nil {
+		return self.buildTrees(self.finalState)
+	}
+	return nil
 }
 
 /*
@@ -463,21 +475,43 @@ func (self *Parser) getTrees() []*Node {
  *    W -> M1
  *
  */
-func (self *Parser) buildTrees(state *TableState) []*Node {
+
+var seq = 0
+
+func blanks(seq int) string {
+	s := ""
+	for i := 0; i < seq; i++ {
+		s += "  "
+	}
+	return s
+}
+
+func (self *Parser) buildTrees(state *TableState) *[]*Node {
+	if treeDebug {
+		glog.Infof("%s<buildTree> state:%+v", blanks(seq), state)
+	}
 	return self.buildTreesHelper(
 		&[]*Node{}, state, len(state.production.rules)-1, state.endCol)
 }
 
-func (self *Parser) buildTreesHelper(
-	children *[]*Node,
-	state *TableState,
-	ruleIndex int,
-	endCol *TableColumn) []*Node {
-	var outputs []*Node
+func (self *Parser) buildTreesHelper(children *[]*Node, state *TableState,
+	ruleIndex int, endCol *TableColumn) *[]*Node {
+	// begin with the last --non-terminal-- of the production of finalState
+	//var outputs []*Node
+	outputs := &[]*Node{}
+	if treeDebug {
+		seq += 1
+		glog.Infof("%s%d <buildTreeHelper> children:%+v, state:%+v, ruleIndex:%+v, endCol:%d",
+			blanks(seq), seq, children, state, ruleIndex, endCol.index)
+		defer glog.Infof("%s%d return: %+v", blanks(seq), seq, outputs)
+	}
 	var startCol *TableColumn
 	if ruleIndex < 0 {
 		// this is the base-case for the recursion (we matched the entire rule)
-		outputs = append(outputs, &Node{value: state, children: *children})
+		*outputs = append(*outputs, &Node{value: state, children: *children})
+		if treeDebug {
+			glog.Infof("%sreturn here", blanks(seq))
+		}
 		return outputs
 	} else if ruleIndex == 0 {
 		// if this is the first rule
@@ -485,7 +519,7 @@ func (self *Parser) buildTreesHelper(
 	}
 	rule := state.production.rules[ruleIndex]
 
-	for _, st := range state.endCol.states {
+	for _, st := range endCol.states {
 		if st == state {
 			// this prevents an endless recursion: since the states are filled in
 			// order of completion, we know that X cannot depend on state Y that
@@ -503,15 +537,15 @@ func (self *Parser) buildTreesHelper(
 		}
 		// okay, so `st` matches -- now we need to create a tree for every possible
 		// sub-match
-		for _, subTree := range self.buildTrees(st) {
+		for _, subTree := range *self.buildTrees(st) {
 			// in python: children2 = [subTree] + children
 			children2 := []*Node{}
 			children2 = append(children2, subTree)
 			children2 = append(children2, *children...)
 			// now try all options
-			for _, node := range self.buildTreesHelper(
+			for _, node := range *self.buildTreesHelper(
 				&children2, state, ruleIndex-1, st.startCol) {
-				outputs = append(outputs, node)
+				*outputs = append(*outputs, node)
 			}
 		}
 	}
